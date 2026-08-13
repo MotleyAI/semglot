@@ -1,0 +1,16 @@
+version: 8
+name: dim_product
+sql_table: ANALYTICS.MAIN.dim_product
+data_source: ecommerce
+columns:
+  - name: product_id
+    type: DOUBLE
+    primary_key: true
+    description: Product surrogate key.
+  - name: category
+    type: TEXT
+    description: Product category.
+  - name: title
+    type: TEXT
+    description: Product title.
+description: Product dimension.

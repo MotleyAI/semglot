@@ -30,6 +30,7 @@ Each emitter writes:
 | `databricks-metric-view` | one `<table>.yaml` metric view per model table, with direct joins to referenced tables (requires Databricks Runtime 17.2+; `display_name`/`synonyms` require 17.3+) |
 | `lightdash` | `schema.yml` — a dbt schema file carrying Lightdash `meta:` blocks, so Lightdash compiles it into explores. A `dbt-meta-key-path` profile option switches `meta:` (dbt <= 1.9) to `config.meta:` (dbt >= 1.10) |
 | `ossie` | `semantic_model.yaml` (Apache Ossie core-spec 0.2.0.dev0); a source dialect as well as a target |
+| `slayer` | one `<table>.yaml` SLayer model per table (SlayerModel schema v8, the shape `slayer models create` reads), plus `NOTES.md` for anything deferred |
 
 ## Mapping
 
@@ -38,21 +39,21 @@ where marked, ossie) reads it back into the IR too; `text` the value survives
 only as prose folded into a description or comment; `--` not emitted (see
 [Gaps vs. limits](#gaps-vs-limits)).
 
-| IR concept | `dbt` | `cortex` | `snowflake-semantic-view` | `supersimple` | `nao-yaml` | `nao-context-rules` | `databricks-metric-view` | `lightdash` | `ossie` |
-|---|---|---|---|---|---|---|---|---|---|
-| Table | `models:` + `semantic_models:` `<->` | `tables[].base_table` | `tables (...)` | one file per model | `--` | "Table reference" (if described) | `source` (+ `joins[].source` for referenced tables) | `models[]` entry | `datasets[]` `<->` |
-| Table source (physical address) | `--` (warned) | `base_table` `database`/`schema`/`table` (three-part references only) | the `TABLES` clause reference | `table:` | `text` (into `notes:`) | `text` (into the Table reference entry) | `source:` + `joins[].source` | `--` (warned) | `source:` on the dataset `<->` |
-| Column / dimension | column + `dimensions type: categorical` `<->` | `dimensions[]` | `dimensions (...)` | `properties` | `dimensions[]` (deduped) | listed if described | `fields[]` | column + `meta.dimension` | `fields[]` with `dimension.is_time: false` `<->` |
-| Time dimension | `dimensions type: time` + `agg_time_dimension` `<->` | `time_dimensions[]` | plain dimension (not marked as time) | `properties` (Date) | `dimensions type: date` | with dimensions | plain `fields[]` entry (not marked as time) | column + `meta.dimension type: date/timestamp` | `fields[]` with `dimension.is_time: true` `<->` |
-| Data type | column `data_type` `<->` | `data_type` | `--` | property `type` | `--` | `--` | `--` | `meta.dimension.type` only where confidently inferable, else omitted | `datatype` (logical enum) `<->` |
-| Primary key | `primary_key` constraint + primary entity `<->` | `primary_key` | `primary key (...)` | `primary_key` | `--` | `--` | `--` | `meta.primary_key` (single column only; composite degrades) | `primary_key: []` (composite supported) `<->` |
-| Relationship / join | `relationships` test on the FK column `<->` | `relationships[]` | `relationships (...) references` | `relations` (hasMany, join_key) | `--` | "Joins & routing" | `joins[]` (quoted `"on":` condition) | `meta.joins[]` (`sql_on` with `${table.col}` refs) | `relationships[]` (`from`/`to`, composite supported) `<->` |
-| Description | `description` `<->` | `description` | `comment='...'` | `description` | `description` (field/metric) | prose | `comment` (field/measure/view) | `description` | `description` `<->` |
-| Table synonyms | model `meta.synonyms` `<->` | `synonyms:` on the table | `with synonyms (...)` on the table | `text` (into the model description) | `text` (into `notes:`) | `text` (into the Table reference entry) | `text` (into the view `comment`) | `text` (into the model description) | `ai_context.synonyms` on the dataset `<->` |
-| Synonyms | `meta.synonyms` on the column `<->` | `synonyms:` | `with synonyms (...)` | `--` (gap) | `text` (into description) | `text` (into description) | `synonyms:` (capped at 10) | `text` (into the column description) | `ai_context.synonyms` `<->` |
-| Enum / allowed values | `accepted_values` test + `meta.enum` `<->` | `sample_values` + `text` | `text` (into comment) | `text` (into description) | `values:` | "Allowed values" | `text` (into comment) | `text` (into the column description) | `text` (into the field description) |
-| Simple metric (aggregation) | `measures` + `metrics type: simple` `<->` | `facts[]` | `metrics (...)` | metric aggregation | metric `source{table,column,aggregation}` | "Key metrics reference" | `measures[]` | column-level `meta.metrics` | model-level `metrics[]` + a `fields[]` entry for the column `<->` |
-| Ratio / derived metric | `type: ratio` / `type: derived` `<->` | `expr` (rendered SQL) | inline SQL in `metrics (...)` | division ratio -> pipeline; other arithmetic -> `NOTES.md` | `type: derived`, `formula` | rendered SQL | inline SQL in `measures[].expr` | model-level `meta.metrics` `type: number` (reference-only; filtered/compound aggregates and cross-table refs degrade) | model-level `metrics[]` (rendered SQL) `<->` |
+| IR concept | `dbt` | `cortex` | `snowflake-semantic-view` | `supersimple` | `nao-yaml` | `nao-context-rules` | `databricks-metric-view` | `lightdash` | `ossie` | `slayer` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Table | `models:` + `semantic_models:` `<->` | `tables[].base_table` | `tables (...)` | one file per model | `--` | "Table reference" (if described) | `source` (+ `joins[].source` for referenced tables) | `models[]` entry | `datasets[]` `<->` | one file per model |
+| Table source (physical address) | `--` (warned) | `base_table` `database`/`schema`/`table` (three-part references only) | the `TABLES` clause reference | `table:` | `text` (into `notes:`) | `text` (into the Table reference entry) | `source:` + `joins[].source` | `--` (warned) | `source:` on the dataset `<->` | `sql_table:` (any reference verbatim; a query goes to `sql:`, a query-backed model) |
+| Column / dimension | column + `dimensions type: categorical` `<->` | `dimensions[]` | `dimensions (...)` | `properties` | `dimensions[]` (deduped) | listed if described | `fields[]` | column + `meta.dimension` | `fields[]` with `dimension.is_time: false` `<->` | `columns[]` |
+| Time dimension | `dimensions type: time` + `agg_time_dimension` `<->` | `time_dimensions[]` | plain dimension (not marked as time) | `properties` (Date) | `dimensions type: date` | with dimensions | plain `fields[]` entry (not marked as time) | column + `meta.dimension type: date/timestamp` | `fields[]` with `dimension.is_time: true` `<->` | `columns[]` `type: DATE/TIMESTAMP` + model `default_time_dimension` |
+| Data type | column `data_type` `<->` | `data_type` | `--` | property `type` | `--` | `--` | `--` | `meta.dimension.type` only where confidently inferable, else omitted | `datatype` (logical enum) `<->` | column `type` (sqlglot names) |
+| Primary key | `primary_key` constraint + primary entity `<->` | `primary_key` | `primary key (...)` | `primary_key` | `--` | `--` | `--` | `meta.primary_key` (single column only; composite degrades) | `primary_key: []` (composite supported) `<->` | `primary_key: true` per column (composite supported) |
+| Relationship / join | `relationships` test on the FK column `<->` | `relationships[]` | `relationships (...) references` | `relations` (hasMany, join_key) | `--` | "Joins & routing" | `joins[]` (quoted `"on":` condition) | `meta.joins[]` (`sql_on` with `${table.col}` refs) | `relationships[]` (`from`/`to`, composite supported) `<->` | `joins[]` on the FK model (one per target model; a second FK to the same target degrades) |
+| Description | `description` `<->` | `description` | `comment='...'` | `description` | `description` (field/metric) | prose | `comment` (field/measure/view) | `description` | `description` `<->` | `description` |
+| Table synonyms | model `meta.synonyms` `<->` | `synonyms:` on the table | `with synonyms (...)` on the table | `text` (into the model description) | `text` (into `notes:`) | `text` (into the Table reference entry) | `text` (into the view `comment`) | `text` (into the model description) | `ai_context.synonyms` on the dataset `<->` | `meta.synonyms` on the model |
+| Synonyms | `meta.synonyms` on the column `<->` | `synonyms:` | `with synonyms (...)` | `--` (gap) | `text` (into description) | `text` (into description) | `synonyms:` (capped at 10) | `text` (into the column description) | `ai_context.synonyms` `<->` | `meta.synonyms` on the column |
+| Enum / allowed values | `accepted_values` test + `meta.enum` `<->` | `sample_values` + `text` | `text` (into comment) | `text` (into description) | `values:` | "Allowed values" | `text` (into comment) | `text` (into the column description) | `text` (into the field description) | `text` (into the column description) |
+| Simple metric (aggregation) | `measures` + `metrics type: simple` `<->` | `facts[]` | `metrics (...)` | metric aggregation | metric `source{table,column,aggregation}` | "Key metrics reference" | `measures[]` | column-level `meta.metrics` | model-level `metrics[]` + a `fields[]` entry for the column `<->` | `measures[]` `formula: col:agg` (+ hidden expression columns) |
+| Ratio / derived metric | `type: ratio` / `type: derived` `<->` | `expr` (rendered SQL) | inline SQL in `metrics (...)` | division ratio -> pipeline; other arithmetic -> `NOTES.md` | `type: derived`, `formula` | rendered SQL | inline SQL in `measures[].expr` | model-level `meta.metrics` `type: number` (reference-only; filtered/compound aggregates and cross-table refs degrade) | model-level `metrics[]` (rendered SQL) `<->` | `measures[]` formula DSL (arithmetic, bare refs, `cumsum`; filtered aggs via hidden `filter:` columns) |
 
 ## Gaps vs. limits
 
@@ -93,6 +94,17 @@ and nao dimensions carry a structured `values:` list
   metric view declares `source`/`joins`/`fields`/`measures` only, no
   primary-key key; Unity Catalog constraints on the underlying table are the
   authority there instead.
+- **Role-playing dimensions in `slayer`.** A SLayer model declares at most one
+  join per `target_model` (its engine rejects a duplicate target with different
+  `join_pairs`, and there is no alias construct to disambiguate with), so of two
+  FKs to the same dimension the first is emitted and the rest degrade to a note.
+  Also renamed rather than dropped: a measure whose name collides with a column
+  (columns and measures share one namespace per model) or shadows a SLayer
+  transform name (`cumsum`, `first`, `last`, ...) gets a `_measure` suffix and a
+  note. Per-metric agg-time grains and slice-by dimension restrictions have no
+  slot — SLayer groups any measure by any dimension at query time — and are
+  reported. Bounded time windows and conversion metrics are not expressible and
+  degrade; unbounded cumulative windows emit as `cumsum(...)`.
 - **Composite primary keys in `lightdash`.** `meta.primary_key` takes a single
   column name, so a multi-column key has nowhere to go and degrades to a note.
 - **Synonyms and enum values in `lightdash`.** Lightdash has no synonym or

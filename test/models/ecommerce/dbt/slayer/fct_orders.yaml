@@ -1,0 +1,90 @@
+version: 8
+name: fct_orders
+sql_table: ANALYTICS.MAIN.fct_orders
+data_source: ecommerce
+columns:
+  - name: order_id
+    type: DOUBLE
+    primary_key: true
+    description: Order surrogate key.
+  - name: customer_sk
+    type: DOUBLE
+    description: Customer the order belongs to.
+  - name: is_refunded
+    type: BOOLEAN
+    description: Whether the order was refunded.
+  - name: billing_customer_sk
+    type: DOUBLE
+    description: Customer who is billed for the order; may differ from the ordering customer (role-playing dimension, e.g. a corporate account's billing contact).
+  - name: channel_id
+    type: DOUBLE
+    description: Sales channel the order came through.
+  - name: aov
+    type: DOUBLE
+    description: Precomputed average order value; superseded by the computed aov metric.
+  - name: order_date
+    type: DATE
+    description: Date the order was placed.
+  - name: order_gross
+    type: DOUBLE
+    description: Gross order revenue before tax and refunds.
+  - name: order_net_booked
+    type: DOUBLE
+    description: Net booked revenue (gross minus tax and refunds).
+  - name: refunded_orders_count_expr
+    sql: case when is_refunded then 1 else 0 end
+    type: DOUBLE
+    hidden: true
+measures:
+  - formula: order_gross:sum
+    name: order_gross_amount
+    description: Gross order revenue before tax and refunds.
+    type: DOUBLE
+  - formula: order_net_booked:sum
+    name: order_net_booked_amount
+    description: Net booked revenue (gross minus tax and refunds).
+    type: DOUBLE
+  - formula: order_id:count_distinct
+    name: orders_count
+    type: INT
+  - formula: refunded_orders_count_expr:sum
+    name: refunded_orders_count
+  - formula: order_gross:sum
+    name: gross_revenue
+    label: Gross revenue
+    description: Gross order revenue.
+  - formula: order_net_booked:sum
+    name: net_revenue
+    label: Net revenue
+    description: Net booked revenue.
+  - formula: order_id:count_distinct
+    name: orders
+    label: Orders
+  - formula: refunded_orders_count_expr:sum
+    name: refunded_orders
+    label: Refunded orders
+    description: Count of refunded orders.
+  - formula: net_revenue / orders
+    name: aov_measure
+    label: Average order value
+    description: Average order value (net revenue / orders).
+  - formula: refunded_orders / orders
+    name: refund_rate
+    label: Refund rate
+    description: Refunded orders / all orders.
+joins:
+  - target_model: dim_customer
+    join_pairs:
+      - - customer_sk
+        - customer_sk
+    join_type: left
+  - target_model: dim_channel
+    join_pairs:
+      - - channel_id
+        - channel_id
+    join_type: left
+description: Order-grain finance fact. One row per order.
+meta:
+  synonyms:
+    - purchases
+    - sales

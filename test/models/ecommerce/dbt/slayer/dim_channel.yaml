@@ -1,0 +1,13 @@
+version: 8
+name: dim_channel
+sql_table: ANALYTICS.MAIN.dim_channel
+data_source: ecommerce
+columns:
+  - name: channel_id
+    type: DOUBLE
+    primary_key: true
+    description: Channel surrogate key.
+  - name: channel_name
+    type: TEXT
+    description: Channel display name.
+description: Sales channel dimension.
