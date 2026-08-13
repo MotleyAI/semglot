@@ -1,0 +1,44 @@
+version: 8
+name: obt_sales
+sql_table: ANALYTICS.MAIN.obt_sales
+data_source: ecommerce
+columns:
+  - name: order_line_id
+    type: DOUBLE
+    primary_key: true
+    description: Line-item surrogate key.
+  - name: order_id
+    type: DOUBLE
+    description: Order the line belongs to.
+  - name: customer_segment
+    type: TEXT
+    description: Marketing segment.
+  - name: is_refunded
+    type: BOOLEAN
+    description: Whether the order line was refunded.
+  - name: order_date
+    type: DATE
+    description: Date the order was placed.
+  - name: quantity
+    type: DOUBLE
+    description: Units sold on the line.
+  - name: net_revenue
+    type: DOUBLE
+    description: Net revenue for the line.
+measures:
+  - formula: quantity:sum
+    name: obt_units_sold
+    description: Units sold on the line.
+    type: DOUBLE
+  - formula: net_revenue:sum
+    name: obt_net_revenue_line
+    description: Net revenue for the line.
+    type: DOUBLE
+joins:
+  - target_model: fct_orders
+    join_pairs:
+      - - order_id
+        - order_id
+    join_type: left
+default_time_dimension: order_date
+description: Wide sales table at order-line grain. One row per order line. Measures only, no metrics.

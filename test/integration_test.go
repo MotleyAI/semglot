@@ -478,6 +478,75 @@ func TestEcommerceSupersimpleGolden(t *testing.T) {
 	}
 }
 
+func TestEcommerceSlayerGolden(t *testing.T) {
+	e, err := dialect.AsEmitter("slayer")
+	if err != nil {
+		t.Fatalf("AsEmitter: %v", err)
+	}
+	if c, ok := e.(dialect.Configurable); ok {
+		e = c.WithOptions(dialect.Options{Database: "ANALYTICS", Schema: "MAIN", Name: "ecommerce"})
+	}
+	p, err := dialect.AsParser("dbt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, err := p.Parse(sourceDirs...)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := e.Emit(model, out); err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	goldenDir := "models/ecommerce/dbt/slayer"
+	entries, err := os.ReadDir(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		_ = os.MkdirAll(goldenDir, 0o755)
+	}
+	for _, ent := range entries {
+		got, err := os.ReadFile(filepath.Join(out, ent.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gpath := filepath.Join(goldenDir, ent.Name())
+		if os.Getenv("UPDATE_GOLDEN") == "1" {
+			if err := os.WriteFile(gpath, got, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		want, err := os.ReadFile(gpath)
+		if err != nil {
+			t.Fatalf("read golden %s (UPDATE_GOLDEN=1 to create): %v", gpath, err)
+		}
+		if string(got) != string(want) {
+			t.Fatalf("%s != golden:\n--- got ---\n%s", ent.Name(), got)
+		}
+	}
+
+	// Reverse direction: every golden must have been produced, so a regression
+	// that stops emitting a file (e.g. NOTES.md or a whole table) is caught;
+	// the loop above only checks produced->golden.
+	if os.Getenv("UPDATE_GOLDEN") != "1" {
+		goldens, err := os.ReadDir(goldenDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		produced := map[string]bool{}
+		for _, ent := range entries {
+			produced[ent.Name()] = true
+		}
+		for _, g := range goldens {
+			if !produced[g.Name()] {
+				t.Fatalf("golden %q was not produced by Emit (stopped emitting or renamed?)", g.Name())
+			}
+		}
+	}
+}
+
 // emitDatabricks runs dbt -> databricks-metric-view over the ecommerce fixture
 // and returns every emitted file keyed by name.
 func emitDatabricks(t *testing.T) map[string]string {
@@ -659,6 +728,19 @@ func TestRolePlayingDimensionAllTargets(t *testing.T) {
 			if !strings.Contains(got, want) {
 				t.Errorf("supersimple DIM_CUSTOMER.yaml missing %q\n--- got ---\n%s", want, got)
 			}
+		}
+	})
+
+	t.Run("slayer", func(t *testing.T) {
+		// SLayer permits one join per target model, so the role-playing
+		// dimension keeps its first FK and reports the second in NOTES.md.
+		got := emitTarget(t, "slayer", "fct_orders.yaml")
+		if n := strings.Count(got, "target_model: dim_customer"); n != 1 {
+			t.Errorf("slayer fct_orders.yaml has %d joins to dim_customer, want exactly 1\n--- got ---\n%s", n, got)
+		}
+		notes := emitTarget(t, "slayer", "NOTES.md")
+		if !strings.Contains(notes, "at most one join per target model") {
+			t.Errorf("slayer NOTES.md missing the duplicate-target join note:\n%s", notes)
 		}
 	})
 

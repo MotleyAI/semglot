@@ -1,0 +1,53 @@
+version: 8
+name: fct_order_lines
+sql_table: ANALYTICS.MAIN.fct_order_lines
+data_source: ecommerce
+columns:
+  - name: order_line_id
+    type: DOUBLE
+    primary_key: true
+    description: Line-item surrogate key.
+  - name: order_id
+    type: DOUBLE
+    description: Order the line belongs to.
+  - name: product_id
+    type: DOUBLE
+    description: Product sold on the line.
+  - name: order_date
+    type: DATE
+    description: Date the parent order was placed.
+  - name: quantity
+    type: DOUBLE
+    description: Units sold on the line.
+  - name: net_line_revenue
+    type: DOUBLE
+    description: Net revenue for the line.
+measures:
+  - formula: quantity:sum
+    name: quantity_measure
+    description: Units sold on the line.
+    type: DOUBLE
+  - formula: net_line_revenue:sum
+    name: net_line_revenue_measure
+    description: Net revenue for the line.
+    type: DOUBLE
+  - formula: quantity:sum
+    name: units_sold
+    label: Units sold
+    description: Units sold.
+  - formula: units_sold / fct_orders.order_id:count_distinct
+    name: units_per_order
+    label: Units per order
+    description: Units per order (cross-table).
+joins:
+  - target_model: fct_orders
+    join_pairs:
+      - - order_id
+        - order_id
+    join_type: left
+  - target_model: dim_product
+    join_pairs:
+      - - product_id
+        - product_id
+    join_type: left
+description: Order-line grain. One row per line item.

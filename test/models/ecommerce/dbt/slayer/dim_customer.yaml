@@ -1,0 +1,20 @@
+version: 8
+name: dim_customer
+sql_table: ANALYTICS.MAIN.dim_customer
+data_source: ecommerce
+columns:
+  - name: customer_sk
+    type: DOUBLE
+    primary_key: true
+    description: Customer surrogate key.
+  - name: customer_segment
+    type: TEXT
+    description: 'Marketing segment. Values: new = First-ever order not yet placed or just placed; returning = Has ordered before; vip = High-value repeat customer; prospect = Signed up, never ordered.'
+    meta:
+      synonyms:
+        - segment
+        - customer_type
+  - name: accepts_marketing
+    type: BOOLEAN
+    description: Whether the customer opted in to marketing.
+description: Customer dimension.
