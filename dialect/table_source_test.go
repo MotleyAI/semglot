@@ -48,18 +48,22 @@ func emitAll(t *testing.T, m *ir.Model) map[string]emitResult {
 		if err != nil {
 			t.Fatalf("%s: emit: %v", name, err)
 		}
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("%s: read output dir: %v", name, err)
-		}
+		// Walk recursively: some targets (metricflow) write a models/ subtree.
 		var files strings.Builder
-		for _, ent := range entries {
-			b, err := os.ReadFile(filepath.Join(dir, ent.Name()))
+		err = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			b, err := os.ReadFile(path)
 			if err != nil {
-				t.Fatalf("%s: read %s: %v", name, ent.Name(), err)
+				return err
 			}
 			files.Write(b)
 			files.WriteByte('\n')
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("%s: read output dir: %v", name, err)
 		}
 		out[name] = emitResult{files: files.String(), warnings: warnings}
 	}

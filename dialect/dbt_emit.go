@@ -25,10 +25,11 @@ type dbtEmitFile struct {
 }
 
 type dbtEmitModel struct {
-	Name        string          `yaml:"name"`
-	Description string          `yaml:"description,omitempty"`
-	Meta        *dbtEmitMeta    `yaml:"meta,omitempty"`
-	Columns     []dbtEmitColumn `yaml:"columns,omitempty"`
+	Name        string              `yaml:"name"`
+	Description string              `yaml:"description,omitempty"`
+	Meta        *dbtEmitMeta        `yaml:"meta,omitempty"`
+	Constraints []dbtEmitConstraint `yaml:"constraints,omitempty"`
+	Columns     []dbtEmitColumn     `yaml:"columns,omitempty"`
 }
 
 type dbtEmitColumn struct {
@@ -48,7 +49,8 @@ type dbtEmitMeta struct {
 }
 
 type dbtEmitConstraint struct {
-	Type string `yaml:"type"`
+	Type    string   `yaml:"type"`
+	Columns []string `yaml:"columns,omitempty,flow"` // model-level (composite) primary_key
 }
 
 type dbtEmitTest struct {
@@ -89,9 +91,15 @@ type dbtEmitEntity struct {
 }
 
 type dbtEmitDimension struct {
-	Name string `yaml:"name"`
-	Type string `yaml:"type"`
-	Expr string `yaml:"expr,omitempty"`
+	Name       string                `yaml:"name"`
+	Type       string                `yaml:"type"`
+	Expr       string                `yaml:"expr,omitempty"`
+	TypeParams *dbtEmitDimTypeParams `yaml:"type_params,omitempty"`
+}
+
+// dbtEmitDimTypeParams is a time dimension's granularity; MetricFlow requires it.
+type dbtEmitDimTypeParams struct {
+	TimeGranularity string `yaml:"time_granularity"`
 }
 
 type dbtEmitMeasure struct {
@@ -146,6 +154,14 @@ type dbtEmitConversionParams struct {
 // genuine dbt limit. It is applied before emitModel too, so a physical column
 // that only a synthesised measure references still gets a columns[] entry.
 func (dbt) Emit(m *ir.Model, dir string) ([]string, error) {
+	f, warnings := buildDBTFile(m, false)
+	return warnings, writeDBTFile(f, dir, "ecommerce.yml")
+}
+
+// buildDBTFile lowers the IR to the dbt YAML shape. With metricflow set, the
+// semantic models carry MetricFlow-runnable entities (see emitSemanticMF)
+// instead of the round-trip-oriented primary-entity-per-PK-column form.
+func buildDBTFile(m *ir.Model, metricflow bool) (dbtEmitFile, []string) {
 	var f dbtEmitFile
 	var warnings []string
 	// A relationship reaches dbt as a `relationships` data test on the FK
@@ -188,6 +204,19 @@ func (dbt) Emit(m *ir.Model, dir string) ([]string, error) {
 		// does not write through to m.
 		t.Metrics = hoist.metricsFor(t)
 		t.Measures = hoist.measuresFor(t)
+		if metricflow && t.Grain == "" && len(t.TimeDimensions) == 0 && (len(t.Measures) > 0 || len(t.Metrics) > 0) {
+			// MetricFlow requires an aggregation time dimension, in the same
+			// semantic model, for every measure. A table with no time
+			// dimension cannot carry measures, so its metrics are dropped and
+			// reported rather than emitted into a manifest that fails to parse.
+			var names []string
+			for _, mt := range t.Metrics {
+				names = append(names, mt.Name)
+			}
+			warnings = append(warnings, fmt.Sprintf(
+				"table %q has no time dimension, and MetricFlow requires one per measure: metrics %v not emitted", t.Name, names))
+			t.Metrics, t.Measures = nil, nil
+		}
 
 		// ir.Table.Source — the physical address an ossie dataset declares —
 		// has no dbt counterpart. A dbt properties file annotates a model dbt
@@ -200,25 +229,36 @@ func (dbt) Emit(m *ir.Model, dir string) ([]string, error) {
 		}
 
 		f.Models = append(f.Models, emitModel(m, t, pk, fk))
-		f.SemanticModels = append(f.SemanticModels, emitSemantic(t, pk, fk))
+		if metricflow {
+			sm, warn := emitSemanticMF(m, t, pk, fk)
+			f.SemanticModels = append(f.SemanticModels, sm)
+			warnings = append(warnings, warn...)
+		} else {
+			f.SemanticModels = append(f.SemanticModels, emitSemantic(t, pk, fk))
+		}
 		metrics, warn := emitMetrics(t)
 		f.Metrics = append(f.Metrics, metrics...)
 		warnings = append(warnings, warn...)
 	}
 
+	return f, warnings
+}
+
+// writeDBTFile encodes f as YAML into dir/name.
+func writeDBTFile(f any, dir, name string) error {
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
 	if err := enc.Encode(f); err != nil {
-		return warnings, err
+		return err
 	}
 	if err := enc.Close(); err != nil {
-		return warnings, err
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return warnings, err
+		return err
 	}
-	return warnings, os.WriteFile(filepath.Join(dir, "ecommerce.yml"), buf.Bytes(), 0o644)
+	return os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o644)
 }
 
 // emitModel builds the classic model-properties block: one column per field that
@@ -283,6 +323,12 @@ func emitModel(m *ir.Model, t ir.Table, pk, fk map[string]bool) dbtEmitModel {
 	}
 
 	em := dbtEmitModel{Name: t.Name, Description: t.Description}
+	// dbt rejects primary_key constraints on more than one column; a composite
+	// key must be a single model-level constraint listing its columns.
+	composite := len(t.PrimaryKey) > 1
+	if composite {
+		em.Constraints = []dbtEmitConstraint{{Type: "primary_key", Columns: t.PrimaryKey}}
+	}
 	if len(t.Synonyms) > 0 {
 		em.Meta = &dbtEmitMeta{Synonyms: t.Synonyms}
 	}
@@ -314,7 +360,7 @@ func emitModel(m *ir.Model, t ir.Table, pk, fk map[string]bool) dbtEmitModel {
 			}
 			c.Meta.Synonyms = s
 		}
-		if pk[col] {
+		if pk[col] && !composite {
 			c.Constraints = append(c.Constraints, dbtEmitConstraint{Type: "primary_key"})
 		}
 		if fk[col] {
