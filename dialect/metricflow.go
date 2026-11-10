@@ -25,8 +25,9 @@ import (
 //     single-valued and a semantic model may have only one primary entity.
 //   - Time dimensions carry `type_params.time_granularity`, and a semantic model
 //     with measures gets `defaults.agg_time_dimension` (its declared grain, else
-//     its first time dimension). A model with measures but no time dimension is
-//     reported: MetricFlow requires an aggregation time dimension per measure.
+//     its first time dimension). A model with measures but no time dimension
+//     gets a NULL-valued plumbing time dimension (agg_time), since MetricFlow
+//     requires an aggregation time dimension per measure; this is reported.
 //   - Because a dbt schema file has no slot for a physical table, each table's
 //     ir.Table.Source is written as a `models/<table>.sql` (select * from it),
 //     and a `metricflow_time_spine` model is added.
@@ -38,6 +39,10 @@ func (metricflow) Name() string { return "metricflow" }
 
 // WithOptions lets the CLI pass the profile's identity fields.
 func (metricflow) WithOptions(o Options) Emitter { return metricflow{opts: o} }
+
+// mfAggTimeName names the NULL-valued plumbing time dimension given to a
+// semantic model that has measures but no time dimension of its own.
+const mfAggTimeName = "agg_time"
 
 // mfKeySep separates key parts in a concatenated composite-key entity.
 const mfKeySep = "'|'"
@@ -175,7 +180,9 @@ func emitSemanticMF(m *ir.Model, t ir.Table, pk, fk map[string]bool) (dbtEmitSem
 	}
 
 	for _, d := range t.Dimensions {
-		if pk[d.Expr] || fk[d.Expr] || used[d.Name] {
+		// Key fields the source declares as dimensions are emitted too: an
+		// entity is a join key, not a queryable member under the source name.
+		if used[d.Name] {
 			continue
 		}
 		sm.Dimensions = append(sm.Dimensions, dbtEmitDimension{
@@ -194,6 +201,14 @@ func emitSemanticMF(m *ir.Model, t ir.Table, pk, fk map[string]bool) (dbtEmitSem
 	grain := t.Grain
 	if grain == "" && len(t.TimeDimensions) > 0 {
 		grain = t.TimeDimensions[0].Name
+	}
+	if len(sm.Measures) > 0 && grain == "" {
+		// No time dimension: add a NULL plumbing one (see dbt_emit.go).
+		sm.Dimensions = append(sm.Dimensions, dbtEmitDimension{
+			Name: mfAggTimeName, Type: "time", Expr: "cast(null as date)",
+			TypeParams: &dbtEmitDimTypeParams{TimeGranularity: "day"},
+		})
+		grain = mfAggTimeName
 	}
 	if len(sm.Measures) > 0 && grain != "" {
 		sm.Defaults = &dbtEmitDefaults{AggTimeDimension: grain}

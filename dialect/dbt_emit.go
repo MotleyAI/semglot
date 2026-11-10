@@ -207,15 +207,16 @@ func buildDBTFile(m *ir.Model, metricflow bool) (dbtEmitFile, []string) {
 		if metricflow && t.Grain == "" && len(t.TimeDimensions) == 0 && (len(t.Measures) > 0 || len(t.Metrics) > 0) {
 			// MetricFlow requires an aggregation time dimension, in the same
 			// semantic model, for every measure. A table with no time
-			// dimension cannot carry measures, so its metrics are dropped and
-			// reported rather than emitted into a manifest that fails to parse.
+			// dimension keeps its metrics, unchanged, and emitSemanticMF gives
+			// it a NULL-valued plumbing time dimension (mfAggTimeName) to
+			// satisfy that check. It adds no business member: every row falls
+			// in the null metric_time bucket, so no metric takes a fake date.
 			var names []string
 			for _, mt := range t.Metrics {
 				names = append(names, mt.Name)
 			}
 			warnings = append(warnings, fmt.Sprintf(
-				"table %q has no time dimension, and MetricFlow requires one per measure: metrics %v not emitted", t.Name, names))
-			t.Metrics, t.Measures = nil, nil
+				"table %q has no time dimension, and MetricFlow requires one per measure: metrics %v emitted with a NULL plumbing time dimension %q", t.Name, names, mfAggTimeName))
 		}
 
 		// ir.Table.Source — the physical address an ossie dataset declares —

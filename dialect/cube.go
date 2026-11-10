@@ -150,6 +150,7 @@ func (e cube) Emit(m *ir.Model, dir string) ([]string, error) {
 		}
 	}
 	hidden := false
+	visible := true
 	// Relationships that reach no cube's joins at all are reported whole.
 	for _, r := range m.Relationships {
 		switch {
@@ -205,6 +206,31 @@ func (e cube) Emit(m *ir.Model, dir string) ([]string, error) {
 				}
 			}
 		}
+		// Reverse joins: one_to_many from this (one) side. A source relationship
+		// is a key equality that can be walked both ways; Cube joins are
+		// directed, so the other direction is declared explicitly (Cube's
+		// documented pattern, e.g. customers -> orders one_to_many). This adds
+		// no member, only lets a query rooted on the one side reach the many side.
+		for _, r := range m.Relationships {
+			if r.Right != t.Name || r.Left == t.Name || len(r.Columns) == 0 || !tables[r.Left] {
+				continue
+			}
+			dup := false
+			for _, j := range c.Joins {
+				if j.Name == r.Left {
+					dup = true
+				}
+			}
+			if dup {
+				warnings = append(warnings, fmt.Sprintf("cube %q: reverse join to %q not emitted (a join to that cube already exists)", t.Name, r.Left))
+				continue
+			}
+			var conds []string
+			for _, cp := range r.Columns {
+				conds = append(conds, fmt.Sprintf("{CUBE}.%s = {%s}.%s", cp.Right, r.Left, cp.Left))
+			}
+			c.Joins = append(c.Joins, cubeJoin{Name: r.Left, SQL: strings.Join(conds, " AND "), Relationship: "one_to_many"})
+		}
 
 		// Dimensions; mark or synthesise the primary key.
 		names := map[string]bool{}
@@ -216,6 +242,9 @@ func (e cube) Emit(m *ir.Model, dir string) ([]string, error) {
 			}
 			if len(t.PrimaryKey) == 1 && strings.EqualFold(f.Expr, t.PrimaryKey[0]) && !pkDone {
 				d.PrimaryKey = true
+				// Cube makes primary keys private by default; this one is a
+				// declared field of the source model, so keep it queryable.
+				d.Public = &visible
 				pkDone = true
 			}
 			names[f.Name] = true
